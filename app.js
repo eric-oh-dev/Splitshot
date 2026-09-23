@@ -302,6 +302,41 @@
     el.className = mode ? mode : "";
   }
 
+  // Phone camera photos are commonly 8-48 megapixels and several MB. Feeding
+  // that straight into Tesseract is slow and can exhaust memory on a phone
+  // browser, which is the most likely reason a scan hangs or silently fails
+  // on mobile. Shrink to a sane max dimension first — plenty of resolution
+  // for receipt text, much lighter to process.
+  function downscaleForOcr(file, maxDim){
+    return new Promise(function(resolve){
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function(){
+        URL.revokeObjectURL(url);
+        var w = img.naturalWidth, h = img.naturalHeight;
+        if (!w || !h){ resolve(file); return; }
+        var scale = Math.min(1, maxDim / Math.max(w, h));
+        var cw = Math.max(1, Math.round(w * scale));
+        var ch = Math.max(1, Math.round(h * scale));
+        var canvas = document.createElement("canvas");
+        canvas.width = cw;
+        canvas.height = ch;
+        var ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, cw, ch);
+        canvas.toBlob(function(blob){ resolve(blob || file); }, "image/jpeg", 0.88);
+      };
+      img.onerror = function(){ URL.revokeObjectURL(url); resolve(file); }; // fall back to the original file
+      img.src = url;
+    });
+  }
+
+  function withTimeout(promise, ms){
+    return new Promise(function(resolve, reject){
+      var timer = setTimeout(function(){ reject({ code: "timeout" }); }, ms);
+      promise.then(function(v){ clearTimeout(timer); resolve(v); }, function(e){ clearTimeout(timer); reject(e); });
+    });
+  }
+
   function scanReceipt(file){
     var thumb = document.getElementById("scanThumb");
     var row = document.getElementById("scanPreviewRow");
@@ -318,18 +353,21 @@
       return;
     }
 
-    Tesseract.createWorker("eng", 1, {
-      logger: function(m){
-        if (m && m.status === "recognizing text"){
-          setScanStatus("Reading receipt… " + Math.round((m.progress || 0) * 100) + "%", "busy");
-        } else if (m && m.status){
-          setScanStatus("Warming up the reader…", "busy");
+    downscaleForOcr(file, 1800).then(function(processedBlob){
+      var work = Tesseract.createWorker("eng", 1, {
+        logger: function(m){
+          if (m && m.status === "recognizing text"){
+            setScanStatus("Reading receipt… " + Math.round((m.progress || 0) * 100) + "%", "busy");
+          } else if (m && m.status){
+            setScanStatus("Warming up the reader…", "busy");
+          }
         }
-      }
-    }).then(function(worker){
-      return worker.recognize(file).then(function(result){
-        return worker.terminate().then(function(){ return result; });
+      }).then(function(worker){
+        return worker.recognize(processedBlob).then(function(result){
+          return worker.terminate().then(function(){ return result; });
+        });
       });
+      return withTimeout(work, 60000);
     }).then(function(result){
       var items = parseReceiptText(result.data && result.data.text);
       applyScanResult(items);
@@ -341,9 +379,13 @@
       }
       rescan.hidden = false;
       render();
-    }).catch(function(){
+    }).catch(function(e){
       state.scanning = false;
-      setScanStatus("Couldn't read that photo clearly — try a clearer, well-lit shot, or add items by hand.", "err");
+      if (e && e.code === "timeout"){
+        setScanStatus("That's taking too long on this device — try a smaller or clearer photo, or add items by hand.", "err");
+      } else {
+        setScanStatus("Couldn't read that photo clearly — try a clearer, well-lit shot, or add items by hand.", "err");
+      }
       rescan.hidden = false;
     });
   }
