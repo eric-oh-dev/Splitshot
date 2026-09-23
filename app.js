@@ -266,8 +266,12 @@
 
   // Very small heuristic: a "line item" is a line of text ending in a price
   // (e.g. "Flat white  5.50"), and isn't one of the usual summary lines.
+  // The cents/separator matching is loose on purpose: real phone-photo OCR
+  // regularly misreads "." as a space and "0" as "O" (e.g. "4 OO" for
+  // "4.00"), and being strict there means silently dropping real items
+  // rather than showing a slightly-wrong price the person can correct.
   var SKIP_WORDS = /\b(total|subtotal|sub[\s-]?total|tax|gst|vat|tip|gratuity|service charge|change|cash|eftpos|card|visa|mastercard|amex|balance|amount due|due|paid|payment|discount|rounding|order|table\s?\d*|receipt|invoice|thank you|welcome|qty|quantity)\b/i;
-  var PRICE_RE = /(?:\$|nzd)?\s?(\d{1,4}[.,]\d{2})\s*$/i;
+  var PRICE_RE = /(?:\$|nzd)?\s?(\d{1,4})[.,\s]([0-9OoSs]{2})\s*$/i;
 
   function parseReceiptText(text){
     var lines = String(text || "").split(/\r?\n/).map(function(l){ return l.trim(); }).filter(Boolean);
@@ -277,11 +281,13 @@
       if (line.length < 3) continue;
       var m = line.match(PRICE_RE);
       if (!m) continue;
-      var price = parseFloat(m[1].replace(",", "."));
+      var cents = m[2].replace(/[OoSs]/g, function(ch){ return ch.toLowerCase() === "s" ? "5" : "0"; });
+      var price = parseFloat(m[1] + "." + cents);
       if (!isFinite(price) || price <= 0 || price > 2000) continue;
       var name = line.slice(0, m.index).trim();
-      name = name.replace(/^[-*#.\s]+/, "").replace(/[-_.\s]{2,}$/, "").trim();
+      name = name.replace(/^[-*#.\s'"‘’“”>»•|]+/, "").replace(/[-_.\s]{2,}$/, "").trim();
       name = name.replace(/^\d+\s*[xX]\s*/, "");
+      name = name.replace(/^\d{1,2}\s+(?=[A-Za-z])/, ""); // strip a stray leading digit OCR sometimes picks up from an adjacent column
       if (!name || !/[a-zA-Z]/.test(name)) continue;
       if (SKIP_WORDS.test(name)) continue;
       results.push({ name: name.slice(0, 60), price: clamp2(price) });
@@ -306,7 +312,8 @@
   // that straight into Tesseract is slow and can exhaust memory on a phone
   // browser, which is the most likely reason a scan hangs or silently fails
   // on mobile. Shrink to a sane max dimension first — plenty of resolution
-  // for receipt text, much lighter to process.
+  // for receipt text, much lighter to process. Resolves a <canvas> (not a
+  // blob) so it can optionally be rotated before OCR — see scanReceipt.
   function downscaleForOcr(file, maxDim){
     return new Promise(function(resolve){
       var url = URL.createObjectURL(file);
@@ -314,7 +321,7 @@
       img.onload = function(){
         URL.revokeObjectURL(url);
         var w = img.naturalWidth, h = img.naturalHeight;
-        if (!w || !h){ resolve(file); return; }
+        if (!w || !h){ resolve(null); return; }
         var scale = Math.min(1, maxDim / Math.max(w, h));
         var cw = Math.max(1, Math.round(w * scale));
         var ch = Math.max(1, Math.round(h * scale));
@@ -323,10 +330,29 @@
         canvas.height = ch;
         var ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, cw, ch);
-        canvas.toBlob(function(blob){ resolve(blob || file); }, "image/jpeg", 0.88);
+        resolve(canvas);
       };
-      img.onerror = function(){ URL.revokeObjectURL(url); resolve(file); }; // fall back to the original file
+      img.onerror = function(){ URL.revokeObjectURL(url); resolve(null); };
       img.src = url;
+    });
+  }
+
+  function rotateCanvas(sourceCanvas, degrees){
+    var srcW = sourceCanvas.width, srcH = sourceCanvas.height;
+    var canvas = document.createElement("canvas");
+    var swapDims = degrees === 90 || degrees === -90 || degrees === 270;
+    canvas.width = swapDims ? srcH : srcW;
+    canvas.height = swapDims ? srcW : srcH;
+    var ctx = canvas.getContext("2d");
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(degrees * Math.PI / 180);
+    ctx.drawImage(sourceCanvas, -srcW / 2, -srcH / 2);
+    return canvas;
+  }
+
+  function canvasToBlob(canvas, quality){
+    return new Promise(function(resolve){
+      canvas.toBlob(function(blob){ resolve(blob); }, "image/jpeg", quality || 0.88);
     });
   }
 
@@ -334,6 +360,54 @@
     return new Promise(function(resolve, reject){
       var timer = setTimeout(function(){ reject({ code: "timeout" }); }, ms);
       promise.then(function(v){ clearTimeout(timer); resolve(v); }, function(e){ clearTimeout(timer); reject(e); });
+    });
+  }
+
+  // Runs OCR against one or more candidate images with a single worker
+  // (loading the language model once) and keeps whichever candidate parses
+  // out the most line items — this is how a sideways receipt photo gets
+  // read correctly without knowing in advance which way it's rotated.
+  // Page segmentation mode 6 ("assume a single uniform block of text") is
+  // set explicitly because the default auto-segmentation was found to split
+  // the item-name column and the price column into separate blocks on real
+  // receipts, silently dropping the price (or the whole line) for some items.
+  function runOcrCandidates(blobs, timeoutMs){
+    var work = Tesseract.createWorker("eng", 1, {
+      logger: function(m){
+        if (m && m.status === "recognizing text"){
+          setScanStatus("Reading receipt… " + Math.round((m.progress || 0) * 100) + "%", "busy");
+        } else if (m && m.status){
+          setScanStatus("Warming up the reader…", "busy");
+        }
+      }
+    }).then(function(worker){
+      return worker.setParameters({ tessedit_pageseg_mode: "6" }).then(function(){
+        var results = [];
+        var chain = Promise.resolve();
+        blobs.forEach(function(blob){
+          chain = chain.then(function(){
+            return worker.recognize(blob).then(function(result){ results.push(result); });
+          });
+        });
+        return chain.then(function(){
+          return worker.terminate().then(function(){ return results; });
+        });
+      });
+    });
+    return withTimeout(work, timeoutMs).then(function(results){
+      var best = { text: "", items: [], confidence: 0 };
+      var bestScore = -1;
+      results.forEach(function(result){
+        var text = (result.data && result.data.text) || "";
+        var items = parseReceiptText(text);
+        var confidence = (result.data && result.data.confidence) || 0;
+        var score = items.length * 1000 + confidence; // item count first, confidence as a tiebreaker
+        if (score > bestScore){
+          bestScore = score;
+          best = { text: text, items: items, confidence: confidence };
+        }
+      });
+      return best;
     });
   }
 
@@ -353,23 +427,22 @@
       return;
     }
 
-    downscaleForOcr(file, 1800).then(function(processedBlob){
-      var work = Tesseract.createWorker("eng", 1, {
-        logger: function(m){
-          if (m && m.status === "recognizing text"){
-            setScanStatus("Reading receipt… " + Math.round((m.progress || 0) * 100) + "%", "busy");
-          } else if (m && m.status){
-            setScanStatus("Warming up the reader…", "busy");
-          }
-        }
-      }).then(function(worker){
-        return worker.recognize(processedBlob).then(function(result){
-          return worker.terminate().then(function(){ return result; });
-        });
-      });
-      return withTimeout(work, 60000);
-    }).then(function(result){
-      var items = parseReceiptText(result.data && result.data.text);
+    downscaleForOcr(file, 1800).then(function(canvas){
+      if (!canvas){
+        // Couldn't decode/resize it (unusual file) — fall back to the raw file, single pass.
+        return runOcrCandidates([file], 60000);
+      }
+      var candidates = [canvas];
+      if (canvas.width > canvas.height){
+        // Receipts are tall and narrow, so a landscape (wider-than-tall) photo
+        // almost always means the phone was held sideways. We don't know
+        // which way, so try both quarter-turns and keep whichever reads best.
+        candidates = [rotateCanvas(canvas, 90), rotateCanvas(canvas, -90)];
+      }
+      return Promise.all(candidates.map(function(c){ return canvasToBlob(c); }))
+        .then(function(blobs){ return runOcrCandidates(blobs, 45000 * blobs.length); });
+    }).then(function(best){
+      var items = best.items;
       applyScanResult(items);
       state.scanning = false;
       if (items.length === 0){
