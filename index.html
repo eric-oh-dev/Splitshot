@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SplitShot</title>
+<meta name="description" content="Snap a receipt, tag who had what, split it clean — just the two of you.">
+<meta name="theme-color" content="#0E7C6B">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SplitShot">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+  <div class="receipt card">
+    <div class="zig top"></div>
+    <div class="receipt-inner">
+
+      <header>
+        <h1>SplitShot</h1>
+        <p>Add what you bought. Tag who had it. Split it clean.</p>
+      </header>
+
+      <div id="exampleBanner" class="banner">
+        <span>This is a sample receipt — clear it to start your own.</span>
+        <button type="button" class="ghost-btn" id="clearExampleBtn">Clear</button>
+      </div>
+
+      <hr class="divider">
+
+      <section id="peopleSection">
+        <div class="section-label">Splitting between</div>
+        <div id="peopleRow">
+          <label class="person-field">
+            <span class="dot" id="p1Dot"></span>
+            <input type="text" id="person1Input" maxlength="24">
+          </label>
+          <label class="person-field">
+            <span class="dot" id="p2Dot"></span>
+            <input type="text" id="person2Input" maxlength="24">
+          </label>
+        </div>
+      </section>
+
+      <hr class="divider">
+
+      <section id="itemsSection">
+        <div class="section-label">Items — tap to assign</div>
+        <div id="itemsList"></div>
+        <button type="button" id="addItemBtn">+ Add item</button>
+      </section>
+
+      <hr class="divider">
+
+      <section id="scanSection">
+        <div class="section-label">Or scan a receipt</div>
+        <button type="button" id="scanZone">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M4 16v2a2 2 0 0 0 2 2h2M20 8V6a2 2 0 0 0-2-2h-2M20 16v2a2 2 0 0 1-2 2h-2"/><circle cx="12" cy="12" r="3.5"/></svg>
+          <span class="scan-title">Scan a receipt</span>
+          <span class="scan-sub" id="scanZoneSub">Take a photo or choose an image</span>
+        </button>
+        <input type="file" id="fileInput" accept="image/*" capture="environment" hidden>
+
+        <div id="scanPreviewRow" hidden>
+          <img id="scanThumb" alt="Receipt photo">
+          <div id="scanStatus"></div>
+          <button type="button" class="ghost-btn" id="rescanBtn" hidden>Try another photo</button>
+        </div>
+      </section>
+
+      <hr class="divider">
+
+      <section id="summarySection">
+        <div class="section-label">Split</div>
+        <div id="summaryList"></div>
+        <div id="emptySummary" hidden>Add people and assign items to see the split.</div>
+        <div id="unassignedNote" class="banner warn" hidden></div>
+        <div id="totalsBlock">
+          <div class="totals-line grand"><span>Total</span><span class="mono tabular" id="tTotal">$0.00</span></div>
+        </div>
+      </section>
+
+    </div>
+    <div class="zig"></div>
+  </div>
+
+  <footer>
+    <button type="button" id="resetBtn">Start over</button>
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
