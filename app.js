@@ -370,13 +370,18 @@
   }
 
   // Runs OCR against one or more candidate images with a single worker
-  // (loading the language model once) and keeps whichever candidate parses
-  // out the most line items — this is how a sideways receipt photo gets
-  // read correctly without knowing in advance which way it's rotated.
-  // Page segmentation mode 6 ("assume a single uniform block of text") is
-  // set explicitly because the default auto-segmentation was found to split
-  // the item-name column and the price column into separate blocks on real
-  // receipts, silently dropping the price (or the whole line) for some items.
+  // (loading the language model once) and keeps whichever result parses out
+  // the most line items — this is how a sideways receipt photo gets read
+  // correctly without knowing in advance which way it's rotated.
+  //
+  // Each image is tried under two page segmentation modes: the default
+  // ("3", fully automatic) and "6" ("assume a single uniform block of
+  // text"). Testing against a real receipt photo showed mode 6 can either
+  // fix or actively hurt results depending on the device/engine, so rather
+  // than gamble on one mode we run both and keep whichever actually found
+  // more items — this can never do worse than the plain default did before.
+  var PSM_MODES = ["3", "6"];
+
   function runOcrCandidates(blobs, timeoutMs){
     var work = Tesseract.createWorker("eng", 1, {
       logger: function(m){
@@ -387,17 +392,19 @@
         }
       }
     }).then(function(worker){
-      return worker.setParameters({ tessedit_pageseg_mode: "6" }).then(function(){
-        var results = [];
-        var chain = Promise.resolve();
-        blobs.forEach(function(blob){
+      var results = [];
+      var chain = Promise.resolve();
+      blobs.forEach(function(blob){
+        PSM_MODES.forEach(function(psm){
           chain = chain.then(function(){
-            return worker.recognize(blob).then(function(result){ results.push(result); });
+            return worker.setParameters({ tessedit_pageseg_mode: psm }).then(function(){
+              return worker.recognize(blob).then(function(result){ results.push(result); });
+            });
           });
         });
-        return chain.then(function(){
-          return worker.terminate().then(function(){ return results; });
-        });
+      });
+      return chain.then(function(){
+        return worker.terminate().then(function(){ return results; });
       });
     });
     return withTimeout(work, timeoutMs).then(function(results){
@@ -435,8 +442,8 @@
 
     downscaleForOcr(file, 1800).then(function(canvas){
       if (!canvas){
-        // Couldn't decode/resize it (unusual file) — fall back to the raw file, single pass.
-        return runOcrCandidates([file], 60000);
+        // Couldn't decode/resize it (unusual file) — fall back to the raw file.
+        return runOcrCandidates([file], 30000 * PSM_MODES.length);
       }
       var candidates = [canvas];
       if (canvas.width > canvas.height){
@@ -446,7 +453,7 @@
         candidates = [rotateCanvas(canvas, 90), rotateCanvas(canvas, -90)];
       }
       return Promise.all(candidates.map(function(c){ return canvasToBlob(c); }))
-        .then(function(blobs){ return runOcrCandidates(blobs, 45000 * blobs.length); });
+        .then(function(blobs){ return runOcrCandidates(blobs, 30000 * PSM_MODES.length * blobs.length); });
     }).then(function(best){
       var items = best.items;
       applyScanResult(items);
