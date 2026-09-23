@@ -267,11 +267,16 @@
   // Very small heuristic: a "line item" is a line of text ending in a price
   // (e.g. "Flat white  5.50"), and isn't one of the usual summary lines.
   // The cents/separator matching is loose on purpose: real phone-photo OCR
-  // regularly misreads "." as a space and "0" as "O" (e.g. "4 OO" for
-  // "4.00"), and being strict there means silently dropping real items
-  // rather than showing a slightly-wrong price the person can correct.
-  var SKIP_WORDS = /\b(total|subtotal|sub[\s-]?total|tax|gst|vat|tip|gratuity|service charge|change|cash|eftpos|card|visa|mastercard|amex|balance|amount due|due|paid|payment|discount|rounding|order|table\s?\d*|receipt|invoice|thank you|welcome|qty|quantity)\b/i;
-  var PRICE_RE = /(?:\$|nzd)?\s?(\d{1,4})[.,\s]([0-9OoSs]{2})\s*$/i;
+  // regularly misreads "." as a space or a colon, and "0" as "O" (e.g.
+  // "4 OO" for "4.00", "3:79" for "3.79"), and being strict there means
+  // silently dropping real items rather than showing a slightly-wrong price
+  // the person can correct.
+  var SKIP_WORDS = /\b(total|subtotal|sub[\s-]?total|tax|gst|vat|tip|gratuity|service charge|change|cash|eftpos|card|visa|mastercard|amex|balance|amount due|due|paid|payment|discount|rounding|order|table\s?\d*|receipt|invoice|thank you|welcome|qty|quantity|time|date|printed|trans(action)?)\b/i;
+  var PRICE_RE = /(?:\$|nzd)?\s?(\d{1,4})[.,:\s]([0-9OoSs]{2})\s*$/i;
+  // A colon is allowed as a decimal separator above (OCR sometimes reads "."
+  // as ":"), but that also matches a clock time like "14:32" or "2:40 pm" —
+  // guard against reading a receipt's date/time line as a price.
+  var CLOCK_TIME_RE = /\b\d{1,2}[:.][0-5]\d(:[0-5]\d)?\s*(am|pm)?\b.{0,6}$/i;
 
   function parseReceiptText(text){
     var lines = String(text || "").split(/\r?\n/).map(function(l){ return l.trim(); }).filter(Boolean);
@@ -281,6 +286,7 @@
       if (line.length < 3) continue;
       var m = line.match(PRICE_RE);
       if (!m) continue;
+      if (m[0].indexOf(":") !== -1 && line.indexOf("$") === -1 && CLOCK_TIME_RE.test(line)) continue;
       var cents = m[2].replace(/[OoSs]/g, function(ch){ return ch.toLowerCase() === "s" ? "5" : "0"; });
       var price = parseFloat(m[1] + "." + cents);
       if (!isFinite(price) || price <= 0 || price > 2000) continue;
