@@ -8,7 +8,7 @@
   function exampleState(){
     return {
       isExample: true,
-      people: [{ id: "p1", name: "You" }, { id: "p2", name: "Sam" }],
+      people: [{ id: "p1", name: "Eric" }, { id: "p2", name: "Mark" }],
       items: [
         { id: uid("i"), name: "Flat white", price: 5.50, assignedTo: ["p1"] },
         { id: uid("i"), name: "Eggs benedict", price: 24.00, assignedTo: ["p1"] },
@@ -77,8 +77,8 @@
     state = {
       isExample: false,
       people: [
-        { id: "p1", name: (keepNames && keepNames[0] && keepNames[0].name) || "You" },
-        { id: "p2", name: (keepNames && keepNames[1] && keepNames[1].name) || "Friend" }
+        { id: "p1", name: (keepNames && keepNames[0] && keepNames[0].name) || "Eric" },
+        { id: "p2", name: (keepNames && keepNames[1] && keepNames[1].name) || "Mark" }
       ],
       items: [],
       currentFile: null,
