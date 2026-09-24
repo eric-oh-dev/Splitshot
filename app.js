@@ -7,14 +7,9 @@
 
   function exampleState(){
     return {
-      isExample: true,
+      isExample: false,
       people: [{ id: "p1", name: "Eric" }, { id: "p2", name: "Mark" }],
-      items: [
-        { id: uid("i"), name: "Flat white", price: 5.50, assignedTo: ["p1"] },
-        { id: uid("i"), name: "Eggs benedict", price: 24.00, assignedTo: ["p1"] },
-        { id: uid("i"), name: "Pancake stack", price: 19.00, assignedTo: ["p2"] },
-        { id: uid("i"), name: "Orange juice x2", price: 14.00, assignedTo: ["p1","p2"] }
-      ],
+      items: [],
       currentFile: null,
       scanning: false
     };
